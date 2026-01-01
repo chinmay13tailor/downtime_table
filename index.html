@@ -165,17 +165,11 @@ const JWT = new URLSearchParams(location.search).get("token") || "";
 let selectedTs = null;
 
 /* =========================
-   HELPERS (FIXES)
+   HELPERS
 ========================= */
 function formatDate(val) {
   if (!val) return "—";
-
-  // Epoch millis
-  if (!isNaN(val)) {
-    return new Date(Number(val)).toLocaleString();
-  }
-
-  // ThingsBoard string datetime → ISO
+  if (!isNaN(val)) return new Date(Number(val)).toLocaleString();
   return new Date(val.replace(" ", "T")).toLocaleString();
 }
 
@@ -222,7 +216,7 @@ async function fetchDowntime() {
 }
 
 /* =========================
-   MERGE SERIES
+   MERGE SERIES (CRITICAL FIX)
 ========================= */
 function mergeSeries(obj) {
   const map = new Map();
@@ -230,7 +224,14 @@ function mergeSeries(obj) {
   for (const [key, arr] of Object.entries(obj)) {
     (arr || []).forEach(p => {
       const row = map.get(p.ts) || { ts: p.ts };
+
       row[key] = p.value;
+
+      // 🔴 Preserve original description timestamp
+      if (key === "Downtime_Description") {
+        row._descTs = p.ts;
+      }
+
       map.set(p.ts, row);
     });
   }
@@ -266,13 +267,14 @@ function renderTable(rows) {
 }
 
 /* =========================
-   MODAL HANDLING
+   MODAL
 ========================= */
 function openModal(r) {
-  selectedTs = r.ts;
+  // 🔴 USE DESCRIPTION TIMESTAMP
+  selectedTs = r._descTs || r.ts;
 
   mStart.textContent = formatDate(r.Downtime_Start_Time);
-  mEnd.textContent = formatDate(r.Downtime_End_Time);
+  mEnd.textContent   = formatDate(r.Downtime_End_Time);
   mDuration.textContent = secToMin(r.Downtime_Duration);
   mReason.value = r.Downtime_Description || "";
 
@@ -284,7 +286,7 @@ function closeModal() {
 }
 
 /* =========================
-   UPDATE REASON (WRITE BACK)
+   UPDATE REASON (OVERWRITE SAFE)
 ========================= */
 async function submitReason() {
   const url =
