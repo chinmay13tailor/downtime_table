@@ -1,0 +1,253 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<title>Downtime Pareto & Downtime Table</title>
+<meta name="viewport" content="width=device-width, initial-scale=1">
+
+<script src="https://cdn.plot.ly/plotly-2.30.0.min.js"></script>
+
+<style>
+body{
+  font-family:"Segoe UI",sans-serif;
+  background:#f3f4f6;
+  margin:0;color:#1e293b
+}
+.page{padding:20px}
+.card{
+  background:#fff;border-radius:12px;
+  padding:16px 20px;margin-bottom:20px;
+  box-shadow:0 2px 10px rgba(0,0,0,.08)
+}
+h2{margin:0 0 14px;color:#1e3a8a;font-size:18px}
+.filters{display:flex;gap:14px;align-items:center;flex-wrap:wrap}
+select,button{
+  padding:8px 12px;border-radius:6px;
+  border:1px solid #cbd5e1;font-size:14px
+}
+button{
+  background:#2563eb;color:#fff;
+  border:none;cursor:pointer;font-weight:600
+}
+button:hover{background:#1d4ed8}
+#status{font-size:14px;color:#475569}
+#paretoChart{height:420px}
+table{width:100%;border-collapse:collapse}
+th,td{padding:10px;border-bottom:1px solid #e5e7eb;text-align:left}
+th{background:#f1f5f9}
+.dot{cursor:pointer;font-weight:bold;float:right}
+.insight p{margin:8px 0}
+.modal{
+  display:none;position:fixed;inset:0;
+  background:rgba(0,0,0,.4);z-index:10
+}
+.modal-box{
+  background:#fff;width:420px;
+  margin:8% auto;padding:20px;
+  border-radius:10px
+}
+.modal-box h3{margin-top:0}
+</style>
+</head>
+
+<body>
+<div class="page">
+
+<!-- FILTER -->
+<div class="card">
+<h2>Downtime Pareto – Time Selection</h2>
+<div class="filters">
+<select id="timeRange">
+<option value="24H">Last 24 Hours</option>
+<option value="WEEK">This Week</option>
+<option value="MONTH">This Month</option>
+</select>
+<button onclick="generateAll()">Generate</button>
+<span id="status">—</span>
+</div>
+</div>
+
+<!-- PARETO -->
+<div class="card">
+<h2>Downtime Pareto Chart</h2>
+<div id="paretoChart"></div>
+</div>
+
+<!-- INSIGHTS -->
+<div class="card insight">
+<h2>Downtime Pareto Insights (This Machine)</h2>
+<p><b>Which downtime reasons cause maximum production loss?</b><br><span id="q1">—</span></p>
+<p><b>Where should maintenance / improvement efforts focus?</b><br><span id="q2">—</span></p>
+<p><b>What problems should be solved first?</b><br><span id="q3">—</span></p>
+</div>
+
+<!-- DOWNTIME TABLE -->
+<div class="card">
+<h2>Downtime Events (Last 24 Hours)</h2>
+<table>
+<thead>
+<tr>
+<th>Start Time</th>
+<th>End Time</th>
+<th>Duration (min)</th>
+<th>Downtime Reason</th>
+</tr>
+</thead>
+<tbody id="downtimeTable">
+<tr><td colspan="4">Loading...</td></tr>
+</tbody>
+</table>
+</div>
+
+</div>
+
+<!-- MODAL -->
+<div id="editModal" class="modal">
+<div class="modal-box">
+<h3>Edit Downtime Reason</h3>
+<p><b>Start:</b> <span id="mStart"></span></p>
+<p><b>End:</b> <span id="mEnd"></span></p>
+<p><b>Duration:</b> <span id="mDuration"></span> min</p>
+
+<label>Downtime Reason</label>
+<select id="mReason" style="width:100%;margin:10px 0">
+<option>Power failure</option>
+<option>Planned maintenance</option>
+<option>Material shortage</option>
+<option>Changeover / Setup</option>
+<option>Lubrication cycle</option>
+<option>Quality inspection hold</option>
+<option>Unplanned breakdown</option>
+<option>Overheat cooldown</option>
+<option>Safety interlock opened</option>
+<option>Cleaning / 5S</option>
+</select>
+
+<button onclick="submitReason()">Submit</button>
+<button onclick="closeModal()" style="background:#e5e7eb;color:#000">Cancel</button>
+</div>
+</div>
+
+<script>
+/* CONFIG */
+const CONFIG={
+API:"https://plantwiz.pimateck.in/api",
+DEVICE:"991cf500-661a-11f0-90f1-775fee303094",
+KEYS:[
+"Downtime_Start_Time","Downtime_End_Time",
+"Downtime_Duration","Downtime_Description","Downtime_Reason_Code"
+]};
+const JWT=new URLSearchParams(location.search).get("token")||"";
+let selectedTs=null;
+
+/* RANGE */
+function getRange(type){
+const now=Date.now();
+let s;
+if(type==="24H")s=now-86400000;
+else if(type==="WEEK"){const d=new Date();d.setHours(0,0,0,0);d.setDate(d.getDate()-d.getDay());s=d.getTime();}
+else{const d=new Date();d.setHours(0,0,0,0);d.setDate(1);s=d.getTime();}
+return{startTs:s,endTs:now};
+}
+
+/* FETCH */
+async function fetchData(startTs,endTs){
+const url=`${CONFIG.API}/plugins/telemetry/DEVICE/${CONFIG.DEVICE}/values/timeseries?keys=${CONFIG.KEYS.join(",")}&startTs=${startTs}&endTs=${endTs}&limit=1000&agg=NONE`;
+const r=await fetch(url,{headers:{"X-Authorization":`Bearer ${JWT}`}});
+return r.json();
+}
+
+/* MERGE */
+function merge(obj){
+const m=new Map();
+for(const[k,a]of Object.entries(obj)){
+(a||[]).forEach(p=>{
+const r=m.get(p.ts)||{ts:p.ts};
+r[k]=p.value;m.set(p.ts,r);
+});
+}
+return Array.from(m.values());
+}
+
+/* PARETO */
+function buildPareto(rows){
+const map={};
+rows.forEach(r=>{
+const k=r.Downtime_Description||"UNKNOWN";
+const d=+r.Downtime_Duration||0;
+map[k]=(map[k]||0)+d;
+});
+const arr=Object.entries(map).map(([r,m])=>({reason:r,minutes:m}))
+.sort((a,b)=>b.minutes-a.minutes);
+let c=0,t=arr.reduce((s,x)=>s+x.minutes,0);
+return arr.map(x=>{c+=x.minutes;return{...x,cum:c/t*100}});
+}
+
+/* RENDER */
+function renderPareto(p){
+Plotly.newPlot("paretoChart",[
+{x:p.map(x=>x.reason),y:p.map(x=>x.minutes),type:"bar"},
+{x:p.map(x=>x.reason),y:p.map(x=>x.cum),type:"scatter",yaxis:"y2"}
+],{yaxis2:{overlaying:"y",side:"right",range:[0,100]},xaxis:{type:"category"}});
+}
+
+/* INSIGHTS */
+function renderInsights(p){
+document.getElementById("q1").textContent=p.slice(0,3).map(x=>x.reason).join(", ");
+document.getElementById("q2").textContent=p.filter(x=>x.cum<=80).map(x=>x.reason).join(", ");
+document.getElementById("q3").textContent=p[0]?.reason||"—";
+}
+
+/* TABLE */
+function renderTable(rows){
+const tb=document.getElementById("downtimeTable");tb.innerHTML="";
+rows.forEach(r=>{
+tb.innerHTML+=`<tr>
+<td>${new Date(+r.Downtime_Start_Time).toLocaleString()}</td>
+<td>${new Date(+r.Downtime_End_Time).toLocaleString()}</td>
+<td>${r.Downtime_Duration}</td>
+<td>${r.Downtime_Description||""}
+<span class="dot" onclick='openModal(${JSON.stringify(r)})'>⋮</span></td>
+</tr>`;
+});
+}
+
+/* MODAL */
+function openModal(r){
+selectedTs=r.ts;
+mStart.textContent=new Date(+r.Downtime_Start_Time).toLocaleString();
+mEnd.textContent=new Date(+r.Downtime_End_Time).toLocaleString();
+mDuration.textContent=r.Downtime_Duration;
+mReason.value=r.Downtime_Description||"";
+editModal.style.display="block";
+}
+function closeModal(){editModal.style.display="none";}
+
+/* UPDATE */
+async function submitReason(){
+await fetch(`${CONFIG.API}/plugins/telemetry/DEVICE/${CONFIG.DEVICE}/timeseries/ANY?ts=${selectedTs}`,{
+method:"POST",
+headers:{
+"Content-Type":"application/json",
+"X-Authorization":`Bearer ${JWT}`
+},
+body:JSON.stringify({Downtime_Description:mReason.value})
+});
+closeModal();generateAll();
+}
+
+/* MAIN */
+async function generateAll(){
+status.textContent="Loading...";
+const {startTs,endTs}=getRange(timeRange.value);
+const rows=merge(await fetchData(startTs,endTs));
+const pareto=buildPareto(rows);
+renderPareto(pareto);
+renderInsights(pareto);
+renderTable(rows);
+status.textContent="Generated ✅";
+}
+</script>
+
+</body>
+</html>
