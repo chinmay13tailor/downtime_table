@@ -6,80 +6,63 @@
 <meta name="viewport" content="width=device-width, initial-scale=1">
 
 <style>
-body{
-  font-family:"Segoe UI",sans-serif;
-  background:#f3f4f6;
-  margin:0;
-  color:#1e293b
+body {
+  font-family: "Segoe UI", sans-serif;
+  background: #f3f4f6;
+  margin: 0;
+  color: #1e293b;
 }
-.page{padding:20px}
-.card{
-  background:#fff;
-  border-radius:12px;
-  padding:16px 20px;
-  margin-bottom:20px;
-  box-shadow:0 2px 10px rgba(0,0,0,.08)
+.page { padding: 20px; }
+.card {
+  background: #ffffff;
+  border-radius: 12px;
+  padding: 16px 20px;
+  box-shadow: 0 2px 10px rgba(0,0,0,.08);
+  margin-bottom: 20px;
 }
-h2{
-  margin:0 0 14px;
-  color:#1e3a8a;
-  font-size:18px
+h2 { margin: 0 0 14px; color: #1e3a8a; font-size: 18px; }
+.filters { display: flex; gap: 12px; align-items: center; }
+select, button {
+  padding: 8px 12px;
+  border-radius: 6px;
+  border: 1px solid #cbd5e1;
+  font-size: 14px;
 }
-.filters{
-  display:flex;
-  gap:12px;
-  align-items:center
+button {
+  background: #2563eb;
+  color: #fff;
+  border: none;
+  cursor: pointer;
+  font-weight: 600;
 }
-select,button{
-  padding:8px 12px;
-  border-radius:6px;
-  border:1px solid #cbd5e1;
-  font-size:14px
+button:hover { background: #1d4ed8; }
+
+table { width: 100%; border-collapse: collapse; }
+th, td {
+  padding: 10px;
+  border-bottom: 1px solid #e5e7eb;
+  text-align: left;
 }
-button{
-  background:#2563eb;
-  color:#fff;
-  border:none;
-  cursor:pointer;
-  font-weight:600
-}
-button:hover{background:#1d4ed8}
-table{
-  width:100%;
-  border-collapse:collapse
-}
-th,td{
-  padding:10px;
-  border-bottom:1px solid #e5e7eb;
-  text-align:left
-}
-th{background:#f1f5f9}
-.dot{
-  cursor:pointer;
-  font-weight:bold;
-  float:right
-}
-#status{
-  font-size:14px;
-  color:#475569
-}
+th { background: #f1f5f9; }
+.dot { cursor: pointer; font-weight: bold; float: right; }
+
+#status { font-size: 14px; color: #475569; }
 
 /* Modal */
-.modal{
-  display:none;
-  position:fixed;
-  inset:0;
-  background:rgba(0,0,0,.4);
-  z-index:10
+.modal {
+  display: none;
+  position: fixed;
+  inset: 0;
+  background: rgba(0,0,0,.4);
+  z-index: 10;
 }
-.modal-box{
-  background:#fff;
-  width:420px;
-  margin:8% auto;
-  padding:20px;
-  border-radius:10px
+.modal-box {
+  background: #fff;
+  width: 420px;
+  margin: 8% auto;
+  padding: 20px;
+  border-radius: 10px;
 }
-.modal-box h3{margin-top:0}
 </style>
 </head>
 
@@ -110,7 +93,7 @@ th{background:#f1f5f9}
         <th>Downtime Description</th>
       </tr>
     </thead>
-    <tbody id="downtimeTable">
+    <tbody id="tableBody">
       <tr><td colspan="4">Select range and click Generate</td></tr>
     </tbody>
   </table>
@@ -118,13 +101,13 @@ th{background:#f1f5f9}
 
 </div>
 
-<!-- EDIT MODAL -->
+<!-- MODAL -->
 <div id="editModal" class="modal">
   <div class="modal-box">
     <h3>Edit Downtime Reason</h3>
 
-    <p><b>Start Time:</b> <span id="mStart"></span></p>
-    <p><b>End Time:</b> <span id="mEnd"></span></p>
+    <p><b>Start:</b> <span id="mStart"></span></p>
+    <p><b>End:</b> <span id="mEnd"></span></p>
     <p><b>Duration:</b> <span id="mDuration"></span> min</p>
 
     <label>Downtime Reason</label>
@@ -147,9 +130,7 @@ th{background:#f1f5f9}
 </div>
 
 <script>
-/* =========================
-   CONFIGURATION
-========================= */
+/* ================= CONFIG ================= */
 const CONFIG = {
   API: "https://plantwiz.pimateck.in/api",
   DEVICE_ID: "991cf500-661a-11f0-90f1-775fee303094",
@@ -162,88 +143,68 @@ const CONFIG = {
 };
 
 const JWT = new URLSearchParams(location.search).get("token") || "";
-let selectedTs = null;
+let selectedDescTs = null;
 
-/* =========================
-   HELPERS
-========================= */
-function formatDate(val) {
-  if (!val) return "—";
-  if (!isNaN(val)) return new Date(Number(val)).toLocaleString();
-  return new Date(val.replace(" ", "T")).toLocaleString();
+/* ================= HELPERS ================= */
+function fmtDate(v) {
+  if (!v) return "—";
+  return new Date(v.replace(" ", "T")).toLocaleString();
+}
+function secToMin(v) {
+  return Math.round(Number(v || 0) / 60);
 }
 
-function secToMin(sec) {
-  return sec ? Math.round(Number(sec) / 60) : 0;
-}
-
-/* =========================
-   TIME RANGE
-========================= */
+/* ================= RANGE ================= */
 function getRange() {
-  const type = document.getElementById("range").value;
+  const t = document.getElementById("range").value;
   const now = Date.now();
-  let startTs;
-
-  if (type === "24H") {
-    startTs = now - 24 * 60 * 60 * 1000;
-  } else {
-    const d = new Date();
-    d.setHours(0,0,0,0);
-    d.setDate(d.getDate() - d.getDay());
-    startTs = d.getTime();
-  }
-
-  return { startTs, endTs: now };
+  if (t === "24H") return { startTs: now - 86400000, endTs: now };
+  const d = new Date();
+  d.setHours(0,0,0,0);
+  d.setDate(d.getDate() - d.getDay());
+  return { startTs: d.getTime(), endTs: now };
 }
 
-/* =========================
-   FETCH DATA
-========================= */
-async function fetchDowntime() {
+/* ================= FETCH ================= */
+async function fetchData() {
   const { startTs, endTs } = getRange();
-
   const url =
     `${CONFIG.API}/plugins/telemetry/DEVICE/${CONFIG.DEVICE_ID}/values/timeseries` +
     `?keys=${CONFIG.KEYS.join(",")}&startTs=${startTs}&endTs=${endTs}` +
     `&limit=1000&agg=NONE`;
 
-  const res = await fetch(url, {
+  const r = await fetch(url, {
     headers: { "X-Authorization": `Bearer ${JWT}` }
   });
-
-  return res.json();
+  return r.json();
 }
 
-/* =========================
-   MERGE SERIES (CRITICAL FIX)
-========================= */
-function mergeSeries(obj) {
-  const map = new Map();
+/* ================= BUILD ROWS (CRITICAL) ================= */
+function buildRows(data) {
+  const rows = {};
 
-  for (const [key, arr] of Object.entries(obj)) {
-    (arr || []).forEach(p => {
-      const row = map.get(p.ts) || { ts: p.ts };
+  (data.Downtime_Description || []).forEach(p => {
+    rows[p.ts] = { desc: p.value, descTs: p.ts };
+  });
 
-      row[key] = p.value;
+  (data.Downtime_Start_Time || []).forEach(p => {
+    rows[p.ts] = { ...(rows[p.ts] || {}), start: p.value };
+  });
 
-      // 🔴 Preserve original description timestamp
-      if (key === "Downtime_Description") {
-        row._descTs = p.ts;
-      }
+  (data.Downtime_End_Time || []).forEach(p => {
+    rows[p.ts] = { ...(rows[p.ts] || {}), end: p.value };
+  });
 
-      map.set(p.ts, row);
-    });
-  }
+  (data.Downtime_Duration || []).forEach(p => {
+    rows[p.ts] = { ...(rows[p.ts] || {}), dur: p.value };
+  });
 
-  return Array.from(map.values());
+  return Object.values(rows);
 }
 
-/* =========================
-   RENDER TABLE
-========================= */
-function renderTable(rows) {
-  const tb = document.getElementById("downtimeTable");
+/* ================= RENDER ================= */
+function render(rows) {
+  const tb = document.getElementById("tableBody");
   tb.innerHTML = "";
 
   if (!rows.length) {
@@ -254,70 +215,55 @@ function renderTable(rows) {
   rows.forEach(r => {
     tb.innerHTML += `
       <tr>
-        <td>${formatDate(r.Downtime_Start_Time)}</td>
-        <td>${formatDate(r.Downtime_End_Time)}</td>
-        <td>${secToMin(r.Downtime_Duration)}</td>
+        <td>${fmtDate(r.start)}</td>
+        <td>${fmtDate(r.end)}</td>
+        <td>${secToMin(r.dur)}</td>
         <td>
-          ${r.Downtime_Description || "—"}
+          ${r.desc || "—"}
           <span class="dot" onclick='openModal(${JSON.stringify(r)})'>⋮</span>
         </td>
-      </tr>
-    `;
+      </tr>`;
   });
 }
 
-/* =========================
-   MODAL
-========================= */
+/* ================= MODAL ================= */
 function openModal(r) {
-  // 🔴 USE DESCRIPTION TIMESTAMP
-  selectedTs = r._descTs || r.ts;
-
-  mStart.textContent = formatDate(r.Downtime_Start_Time);
-  mEnd.textContent   = formatDate(r.Downtime_End_Time);
-  mDuration.textContent = secToMin(r.Downtime_Duration);
-  mReason.value = r.Downtime_Description || "";
-
+  selectedDescTs = r.descTs;
+  mStart.textContent = fmtDate(r.start);
+  mEnd.textContent = fmtDate(r.end);
+  mDuration.textContent = secToMin(r.dur);
+  mReason.value = r.desc || "";
   editModal.style.display = "block";
 }
-
 function closeModal() {
   editModal.style.display = "none";
 }
 
-/* =========================
-   UPDATE REASON (OVERWRITE SAFE)
-========================= */
+/* ================= UPDATE ================= */
 async function submitReason() {
-  const url =
-    `${CONFIG.API}/plugins/telemetry/DEVICE/${CONFIG.DEVICE_ID}/timeseries/ANY?ts=${selectedTs}`;
-
-  await fetch(url, {
-    method: "POST",
-    headers: {
-      "Content-Type": "application/json",
-      "X-Authorization": `Bearer ${JWT}`
-    },
-    body: JSON.stringify({
-      Downtime_Description: mReason.value
-    })
-  });
-
+  await fetch(
+    `${CONFIG.API}/plugins/telemetry/DEVICE/${CONFIG.DEVICE_ID}/timeseries/ANY?ts=${selectedDescTs}`,
+    {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        "X-Authorization": `Bearer ${JWT}`
+      },
+      body: JSON.stringify({ Downtime_Description: mReason.value })
+    }
+  );
   closeModal();
   loadTable();
 }
 
-/* =========================
-   MAIN
-========================= */
+/* ================= MAIN ================= */
 async function loadTable() {
-  document.getElementById("status").textContent = "Loading...";
-  const raw = await fetchDowntime();
-  const rows = mergeSeries(raw);
-  renderTable(rows);
-  document.getElementById("status").textContent = "Loaded ✅";
+  status.textContent = "Loading...";
+  const raw = await fetchData();
+  const rows = buildRows(raw);
+  render(rows);
+  status.textContent = "Loaded ✅";
 }
 </script>
-
 </body>
 </html>
