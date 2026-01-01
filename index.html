@@ -18,6 +18,16 @@ body{
   box-shadow:0 2px 10px rgba(0,0,0,.08)
 }
 h2{margin:0 0 14px;color:#1e3a8a;font-size:18px}
+.filters{display:flex;gap:12px;align-items:center}
+select,button{
+  padding:8px 12px;border-radius:6px;
+  border:1px solid #cbd5e1;font-size:14px
+}
+button{
+  background:#2563eb;color:#fff;
+  border:none;cursor:pointer;font-weight:600
+}
+button:hover{background:#1d4ed8}
 table{width:100%;border-collapse:collapse}
 th,td{padding:10px;border-bottom:1px solid #e5e7eb;text-align:left}
 th{background:#f1f5f9}
@@ -34,25 +44,27 @@ th{background:#f1f5f9}
   margin:8% auto;padding:20px;
   border-radius:10px
 }
-.modal-box h3{margin-top:0}
-select,button{
-  padding:8px 12px;border-radius:6px;
-  border:1px solid #cbd5e1;font-size:14px
-}
-button{
-  background:#2563eb;color:#fff;
-  border:none;cursor:pointer;font-weight:600
-}
-button:hover{background:#1d4ed8}
 </style>
 </head>
 
 <body>
 <div class="page">
 
+<!-- FILTER -->
+<div class="card">
+<h2>Downtime Events</h2>
+<div class="filters">
+<select id="range">
+<option value="24H">Last 24 Hours</option>
+<option value="WEEK">This Week</option>
+</select>
+<button onclick="loadTable()">Generate</button>
+<span id="status">—</span>
+</div>
+</div>
+
 <!-- TABLE -->
 <div class="card">
-<h2>Downtime Events (Last 24 Hours)</h2>
 <table>
 <thead>
 <tr>
@@ -63,21 +75,20 @@ button:hover{background:#1d4ed8}
 </tr>
 </thead>
 <tbody id="downtimeTable">
-<tr><td colspan="4">Loading...</td></tr>
+<tr><td colspan="4">Select range & click Generate</td></tr>
 </tbody>
 </table>
-<p id="status">—</p>
 </div>
 
 </div>
 
-<!-- EDIT MODAL -->
+<!-- MODAL -->
 <div id="editModal" class="modal">
 <div class="modal-box">
 <h3>Edit Downtime Reason</h3>
 
-<p><b>Start Time:</b> <span id="mStart"></span></p>
-<p><b>End Time:</b> <span id="mEnd"></span></p>
+<p><b>Start:</b> <span id="mStart"></span></p>
+<p><b>End:</b> <span id="mEnd"></span></p>
 <p><b>Duration:</b> <span id="mDuration"></span> min</p>
 
 <label>Downtime Reason</label>
@@ -100,138 +111,118 @@ button:hover{background:#1d4ed8}
 </div>
 
 <script>
-/* =========================
-   CONFIG
-========================= */
-const CONFIG = {
-  API: "https://plantwiz.pimateck.in/api",
-  DEVICE_ID: "991cf500-661a-11f0-90f1-775fee303094",
-  KEYS: [
-    "Downtime_Start_Time",
-    "Downtime_End_Time",
-    "Downtime_Duration",
-    "Downtime_Description"
-  ]
+/* CONFIG */
+const CONFIG={
+API:"https://plantwiz.pimateck.in/api",
+DEVICE:"991cf500-661a-11f0-90f1-775fee303094",
+KEYS:[
+"Downtime_Start_Time",
+"Downtime_End_Time",
+"Downtime_Duration",
+"Downtime_Description"
+]
 };
 
-/* =========================
-   JWT
-========================= */
-const JWT = new URLSearchParams(location.search).get("token") || "";
-let selectedTs = null;
+const JWT=new URLSearchParams(location.search).get("token")||"";
+let selectedTs=null;
 
-/* =========================
-   LAST 24 HOURS RANGE
-========================= */
-function getLast24H() {
-  const now = Date.now();
-  return { startTs: now - 86400000, endTs: now };
+/* RANGE */
+function getRange(){
+const type=document.getElementById("range").value;
+const now=Date.now();
+let start;
+if(type==="24H") start=now-86400000;
+else{
+const d=new Date();
+d.setHours(0,0,0,0);
+d.setDate(d.getDate()-d.getDay());
+start=d.getTime();
+}
+return{startTs:start,endTs:now};
 }
 
-/* =========================
-   FETCH DATA
-========================= */
-async function fetchDowntime() {
-  const { startTs, endTs } = getLast24H();
-  const url =
-    `${CONFIG.API}/plugins/telemetry/DEVICE/${CONFIG.DEVICE_ID}/values/timeseries` +
-    `?keys=${CONFIG.KEYS.join(",")}&startTs=${startTs}&endTs=${endTs}&limit=1000&agg=NONE`;
+/* FETCH */
+async function fetchDowntime(){
+const {startTs,endTs}=getRange();
+const url=
+`${CONFIG.API}/plugins/telemetry/DEVICE/${CONFIG.DEVICE}/values/timeseries?keys=${CONFIG.KEYS.join(",")}&startTs=${startTs}&endTs=${endTs}&limit=1000&agg=NONE`;
 
-  const res = await fetch(url, {
-    headers: { "X-Authorization": `Bearer ${JWT}` }
-  });
-
-  return res.json();
+const r=await fetch(url,{
+headers:{"X-Authorization":`Bearer ${JWT}`}
+});
+return r.json();
 }
 
-/* =========================
-   MERGE SERIES
-========================= */
-function mergeSeries(obj) {
-  const map = new Map();
-  for (const [key, arr] of Object.entries(obj)) {
-    (arr || []).forEach(p => {
-      const row = map.get(p.ts) || { ts: p.ts };
-      row[key] = p.value;
-      map.set(p.ts, row);
-    });
-  }
-  return Array.from(map.values());
+/* MERGE */
+function merge(obj){
+const m=new Map();
+for(const[k,a]of Object.entries(obj)){
+(a||[]).forEach(p=>{
+const r=m.get(p.ts)||{ts:p.ts};
+r[k]=p.value;
+m.set(p.ts,r);
+});
+}
+return Array.from(m.values());
 }
 
-/* =========================
-   RENDER TABLE
-========================= */
-function renderTable(rows) {
-  const tb = document.getElementById("downtimeTable");
-  tb.innerHTML = "";
-
-  rows.forEach(r => {
-    tb.innerHTML += `
-      <tr>
-        <td>${new Date(+r.Downtime_Start_Time).toLocaleString()}</td>
-        <td>${new Date(+r.Downtime_End_Time).toLocaleString()}</td>
-        <td>${r.Downtime_Duration}</td>
-        <td>
-          ${r.Downtime_Description || "—"}
-          <span class="dot" onclick='openModal(${JSON.stringify(r)})'>⋮</span>
-        </td>
-      </tr>`;
-  });
+/* TABLE */
+function renderTable(rows){
+const tb=document.getElementById("downtimeTable");
+tb.innerHTML="";
+if(!rows.length){
+tb.innerHTML="<tr><td colspan='4'>No downtime found</td></tr>";
+return;
+}
+rows.forEach(r=>{
+tb.innerHTML+=`
+<tr>
+<td>${new Date(+r.Downtime_Start_Time).toLocaleString()}</td>
+<td>${new Date(+r.Downtime_End_Time).toLocaleString()}</td>
+<td>${r.Downtime_Duration}</td>
+<td>
+${r.Downtime_Description||"—"}
+<span class="dot" onclick='openModal(${JSON.stringify(r)})'>⋮</span>
+</td>
+</tr>`;
+});
 }
 
-/* =========================
-   MODAL
-========================= */
-function openModal(row) {
-  selectedTs = row.ts;
-
-  mStart.textContent = new Date(+row.Downtime_Start_Time).toLocaleString();
-  mEnd.textContent = new Date(+row.Downtime_End_Time).toLocaleString();
-  mDuration.textContent = row.Downtime_Duration;
-  mReason.value = row.Downtime_Description || "";
-
-  editModal.style.display = "block";
+/* MODAL */
+function openModal(r){
+selectedTs=r.ts;
+mStart.textContent=new Date(+r.Downtime_Start_Time).toLocaleString();
+mEnd.textContent=new Date(+r.Downtime_End_Time).toLocaleString();
+mDuration.textContent=r.Downtime_Duration;
+mReason.value=r.Downtime_Description||"";
+editModal.style.display="block";
 }
+function closeModal(){editModal.style.display="none";}
 
-function closeModal() {
-  editModal.style.display = "none";
-}
-
-/* =========================
-   UPDATE REASON
-========================= */
-async function submitReason() {
-  const url =
-    `${CONFIG.API}/plugins/telemetry/DEVICE/${CONFIG.DEVICE_ID}/timeseries/ANY?ts=${selectedTs}`;
-
-  await fetch(url, {
-    method: "POST",
-    headers: {
-      "Content-Type": "application/json",
-      "X-Authorization": `Bearer ${JWT}`
-    },
-    body: JSON.stringify({
-      Downtime_Description: mReason.value
-    })
-  });
-
-  closeModal();
-  loadTable();
-}
-
-/* =========================
-   INIT
-========================= */
-async function loadTable() {
-  document.getElementById("status").textContent = "Loading...";
-  const raw = await fetchDowntime();
-  const rows = mergeSeries(raw);
-  renderTable(rows);
-  document.getElementById("status").textContent = "Loaded ✅";
-}
-
+/* UPDATE */
+async function submitReason(){
+await fetch(
+`${CONFIG.API}/plugins/telemetry/DEVICE/${CONFIG.DEVICE}/timeseries/ANY?ts=${selectedTs}`,
+{
+method:"POST",
+headers:{
+"Content-Type":"application/json",
+"X-Authorization":`Bearer ${JWT}`
+},
+body:JSON.stringify({Downtime_Description:mReason.value})
+});
+closeModal();
 loadTable();
+}
+
+/* MAIN */
+async function loadTable(){
+status.textContent="Loading...";
+const raw=await fetchDowntime();
+const rows=merge(raw);
+renderTable(rows);
+status.textContent="Loaded ✅";
+}
 </script>
 
 </body>
