@@ -276,7 +276,7 @@ function prevPage() {
   }
 }
 function changePageSize() {
-  pageSize = Number(pageSizeSelect.value || pageSize);
+  pageSize = Number(document.getElementById("pageSize").value);
   currentPage = 1;
   renderPage();
 }
