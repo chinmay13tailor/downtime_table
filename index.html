@@ -19,11 +19,7 @@ body {
   padding: 16px 20px;
   box-shadow: 0 2px 10px rgba(0,0,0,.08);
 }
-h2 {
-  margin: 0 0 14px;
-  color: #1e3a8a;
-  font-size: 18px;
-}
+h2 { margin: 0 0 14px; color: #1e3a8a; font-size: 18px; }
 .filters {
   display: flex;
   gap: 12px;
@@ -56,15 +52,15 @@ th, td {
   text-align: left;
 }
 th { background: #f1f5f9; }
-.menu {
-  cursor: pointer;
-  font-weight: bold;
-  float: right;
+.menu { cursor: pointer; font-weight: bold; float: right; }
+
+.pagination {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-top: 12px;
 }
-#status {
-  font-size: 14px;
-  color: #475569;
-}
+#status { font-size: 14px; color: #475569; }
 
 /* Modal */
 .modal {
@@ -95,7 +91,14 @@ th { background: #f1f5f9; }
       <option value="24H">Last 24 Hours</option>
       <option value="WEEK">This Week</option>
     </select>
+
     <button onclick="loadDowntime()">Generate</button>
+
+    <select id="pageSize" onchange="changePageSize()">
+      <option value="10">10 rows</option>
+      <option value="20">20 rows</option>
+    </select>
+
     <span id="status">—</span>
   </div>
 
@@ -108,10 +111,14 @@ th { background: #f1f5f9; }
         <th>Downtime Description</th>
       </tr>
     </thead>
-    <tbody id="tableBody">
-      <tr><td colspan="4">Select range and click Generate</td></tr>
-    </tbody>
+    <tbody id="tableBody"></tbody>
   </table>
+
+  <div class="pagination">
+    <button onclick="prevPage()">Prev</button>
+    <span id="pageInfo">Page 1 of 1</span>
+    <button onclick="nextPage()">Next</button>
+  </div>
 </div>
 
 </div>
@@ -125,7 +132,6 @@ th { background: #f1f5f9; }
     <p><b>End:</b> <span id="mEnd"></span></p>
     <p><b>Duration:</b> <span id="mDuration"></span> min</p>
 
-    <label>Downtime Reason</label>
     <select id="mReason" style="width:100%;margin:10px 0">
       <option>Power failure</option>
       <option>Planned maintenance</option>
@@ -157,8 +163,11 @@ const KEYS = [
 
 const JWT = new URLSearchParams(location.search).get("token") || "";
 
+/* Pagination state */
+let allRows = [];
+let currentPage = 1;
+let pageSize = 10;
 let selectedTs = null;
-let selectedRow = null;
 
 /* ================= HELPERS ================= */
 function fmtDate(val) {
@@ -174,9 +183,7 @@ function getRange() {
   const type = document.getElementById("range").value;
   const now = Date.now();
 
-  if (type === "24H") {
-    return { startTs: now - 86400000, endTs: now };
-  }
+  if (type === "24H") return { startTs: now - 86400000, endTs: now };
 
   const d = new Date();
   d.setHours(0,0,0,0);
@@ -184,14 +191,15 @@ function getRange() {
   return { startTs: d.getTime(), endTs: now };
 }
 
-/* ================= FETCH ================= */
+/* ================= LOAD DATA ================= */
 async function loadDowntime() {
-  const { startTs, endTs } = getRange();
   document.getElementById("status").textContent = "Loading...";
+  currentPage = 1;
 
+  const { startTs, endTs } = getRange();
   const url =
     `${API}/plugins/telemetry/DEVICE/${DEVICE_ID}/values/timeseries` +
-    `?keys=${KEYS.join(",")}&startTs=${startTs}&endTs=${endTs}&limit=1000&agg=NONE`;
+    `?keys=${KEYS.join(",")}&startTs=${startTs}&endTs=${endTs}&limit=2000&agg=NONE`;
 
   const res = await fetch(url, {
     headers: { "X-Authorization": "Bearer " + JWT }
@@ -199,7 +207,6 @@ async function loadDowntime() {
 
   const data = await res.json();
 
-  // 🔑 ts is the ROW ID
   const rows = {};
   Object.entries(data).forEach(([key, arr]) => {
     (arr || []).forEach(p => {
@@ -208,22 +215,21 @@ async function loadDowntime() {
     });
   });
 
-  renderTable(Object.values(rows));
+  allRows = Object.values(rows).sort((a,b) => b.ts - a.ts);
+  renderPage();
   document.getElementById("status").textContent = "Loaded ✅";
 }
 
-/* ================= RENDER ================= */
-function renderTable(rows) {
-  const tb = document.getElementById("tableBody");
-  tb.innerHTML = "";
+/* ================= RENDER PAGE ================= */
+function renderPage() {
+  const tbody = document.getElementById("tableBody");
+  tbody.innerHTML = "";
 
-  if (!rows.length) {
-    tb.innerHTML = "<tr><td colspan='4'>No downtime found</td></tr>";
-    return;
-  }
+  const start = (currentPage - 1) * pageSize;
+  const pageRows = allRows.slice(start, start + pageSize);
 
-  rows.forEach(r => {
-    tb.innerHTML += `
+  pageRows.forEach(r => {
+    tbody.innerHTML += `
       <tr>
         <td>${fmtDate(r.Downtime_Start_Time)}</td>
         <td>${fmtDate(r.Downtime_End_Time)}</td>
@@ -235,31 +241,53 @@ function renderTable(rows) {
       </tr>
     `;
   });
+
+  const totalPages = Math.max(1, Math.ceil(allRows.length / pageSize));
+  document.getElementById("pageInfo").textContent =
+    `Page ${currentPage} of ${totalPages}`;
+}
+
+/* ================= PAGINATION ================= */
+function nextPage() {
+  const totalPages = Math.ceil(allRows.length / pageSize);
+  if (currentPage < totalPages) {
+    currentPage++;
+    renderPage();
+  }
+}
+function prevPage() {
+  if (currentPage > 1) {
+    currentPage--;
+    renderPage();
+  }
+}
+function changePageSize() {
+  pageSize = Number(document.getElementById("pageSize").value);
+  currentPage = 1;
+  renderPage();
 }
 
 /* ================= MODAL ================= */
 function openModal(row) {
-  selectedRow = row;
-  selectedTs = row.ts;   // 🔴 EXACT TS USED
+  selectedTs = row.ts;
 
-  document.getElementById("mStart").textContent = fmtDate(row.Downtime_Start_Time);
-  document.getElementById("mEnd").textContent   = fmtDate(row.Downtime_End_Time);
-  document.getElementById("mDuration").textContent = secToMin(row.Downtime_Duration);
-  document.getElementById("mReason").value = row.Downtime_Description || "";
+  mStart.textContent = fmtDate(row.Downtime_Start_Time);
+  mEnd.textContent = fmtDate(row.Downtime_End_Time);
+  mDuration.textContent = secToMin(row.Downtime_Duration);
+  mReason.value = row.Downtime_Description || "";
 
-  document.getElementById("editModal").style.display = "block";
+  editModal.style.display = "block";
 }
-
 function closeModal() {
-  document.getElementById("editModal").style.display = "none";
+  editModal.style.display = "none";
 }
 
-/* ================= UPDATE (EXACT TS) ================= */
+/* ================= UPDATE ================= */
 async function submitUpdate() {
   const payload = [{
-    ts: selectedTs,   // 🔥 SAME TS → overwrite
+    ts: selectedTs,
     values: {
-      Downtime_Description: document.getElementById("mReason").value
+      Downtime_Description: mReason.value
     }
   }];
 
